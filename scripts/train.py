@@ -179,7 +179,10 @@ def main(argv):
                        FLAGS.batch,
                        True,
                        drop_last=True,
-                       num_workers=num_workers)
+                       num_workers=num_workers,
+                       pin_memory=True,
+                       persistent_workers=True
+                       )
     val = DataLoader(val, FLAGS.batch, False, num_workers=num_workers)
 
     # CHECKPOINT CALLBACKS

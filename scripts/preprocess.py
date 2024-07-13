@@ -57,32 +57,34 @@ def float_array_to_int16_bytes(x):
 
 def load_audio_chunk(path: str, n_signal: int,
                      sr: int, channels: int = 1) -> Iterable[np.ndarray]:
+    try:
+        _, input_channels = get_audio_channels(path)
+        channel_map = range(channels)
+        if input_channels < channels:
+            channel_map = (math.ceil(channels / input_channels) * list(range(input_channels)))[:channels]
 
-    _, input_channels = get_audio_channels(path)
-    channel_map = range(channels)
-    if input_channels < channels:
-        channel_map = (math.ceil(channels / input_channels) * list(range(input_channels)))[:channels]
-
-    processes = []
-    for i in range(channels): 
-        process = subprocess.Popen(
-            [
-                'ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', path, 
-                '-ar', str(sr),
-                '-f', 's16le',
-                '-filter_complex', 'channelmap=%d-0'%channel_map[i],
-                '-'
-            ],
-            stdout=subprocess.PIPE,
-        )
-        processes.append(process)
-    
-    chunk = [p.stdout.read(n_signal * 4) for p in processes]
-    while len(chunk[0]) == n_signal * 4:
-        yield b''.join(chunk)
+        processes = []
+        for i in range(channels): 
+            process = subprocess.Popen(
+                [
+                    'ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', path, 
+                    '-ar', str(sr),
+                    '-f', 's16le',
+                    '-filter_complex', 'channelmap=%d-0'%channel_map[i],
+                    '-'
+                ],
+                stdout=subprocess.PIPE,
+            )
+            processes.append(process)
+        
         chunk = [p.stdout.read(n_signal * 4) for p in processes]
-    process.stdout.close()
-
+        while len(chunk[0]) == n_signal * 4:
+            yield b''.join(chunk)
+            chunk = [p.stdout.read(n_signal * 4) for p in processes]
+        process.stdout.close()
+    except Exception as e:
+        print(f"Error loading audio chunk from {path}: {e}")
+        return []  # or handle the error appropriately
 
 def get_audio_length(path: str) -> float:
     process = subprocess.Popen(
@@ -192,9 +194,13 @@ def flatmap(pool: multiprocessing.Pool,
 
 def flat_mappper(func, arg):
     data, queue = arg
-    for item in func(data):
-        queue.put(item)
-
+    try:
+        for item in func(data):
+            queue.put(item)
+    except Exception as e:
+        print(f"Error in flat_mappper: {e}")
+        import traceback
+        traceback.print_exc()
 
 def search_for_audios(path_list: Sequence[str], extensions: Sequence[str]):
     paths = map(pathlib.Path, path_list)
@@ -253,13 +259,22 @@ def main(argv):
 
         processed_samples = map(partial(process_audio_array, env=env, channels=FLAGS.channels), chunks)
 
+        print("Number of audio files:", len(audios))
+        print("First few audio paths:", audios[:5])
+        print("Chunks type:", type(chunks))
+
         pbar = tqdm(processed_samples)
         n_seconds = 0
-        for audio_id in pbar:
-            n_seconds = (FLAGS.num_signal * 2) / FLAGS.sampling_rate * audio_id
-            pbar.set_description(
-                f'dataset length: {timedelta(seconds=n_seconds)}')
-        pbar.close()
+        try:
+            for audio_id in pbar:
+                n_seconds = (FLAGS.num_signal * 2) / FLAGS.sampling_rate * audio_id
+                pbar.set_description(
+                    f'dataset length: {timedelta(seconds=n_seconds)}')
+            pbar.close()
+        except Exception as e:
+            print(f"Error in processing loop: {e}")
+            import traceback
+            traceback.print_exc()
     else:
         audio_lengths = pool.imap_unordered(get_audio_length, audios)
         audio_lengths = filter(lambda x: x is not None, audio_lengths)
